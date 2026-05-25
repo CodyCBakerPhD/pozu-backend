@@ -27,7 +27,7 @@ import werkzeug.datastructures
 # Config
 # =============================================================================
 
-VENV_BIN = "/home/CodyCBakerPhD/.virtualenvs/pose-zoo/bin"
+VENV_BIN = "/home/CodyCBakerPhD/.virtualenvs/pozu/bin"
 DANDI_BIN = f"{VENV_BIN}/dandi"
 
 api_key_file_path = pathlib.Path("/home/CodyCBakerPhD/dandi_token")  # chmod 600

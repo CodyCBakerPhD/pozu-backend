@@ -11,7 +11,7 @@ jobs:
         run: |
           curl -X POST \
             -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
-            "https://www.pythonanywhere.com/api/v0/user/CodyCBakerPhD/webapps/pose-zoo-CodyCBakerPhD.pythonanywhere.com/"
+            "https://www.pythonanywhere.com/api/v0/user/CodyCBakerPhD/webapps/pozu-CodyCBakerPhD.pythonanywhere.com/"
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.0
@@ -27,4 +27,4 @@ jobs:
         run: |
           curl -X POST \
             -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
-            "https://www.pythonanywhere.com/api/v0/user/CodyCBakerPhD/webapps/pose-zoo-CodyCBakerPhD.pythonanywhere.com/reload/"
+            "https://www.pythonanywhere.com/api/v0/user/CodyCBakerPhD/webapps/pozu-CodyCBakerPhD.pythonanywhere.com/reload/"

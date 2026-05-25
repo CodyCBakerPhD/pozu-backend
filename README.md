@@ -1,3 +1,7 @@
+<p align="center">
+  <img alt="Historia logo" src="https://raw.githubusercontent.com/CodyCBakerPhD/pozu-branding/main/v1/name-pose+zoo+logo_clipped.svg" width="320">
+</p>
+
 # Pozu (Backend)
 
 Backend Flask server for the Pozu web app.

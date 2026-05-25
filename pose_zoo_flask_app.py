@@ -4,27 +4,9 @@ DANDI annotation ingest service - single-file Flask + Flask-RESTX app.
 Designed to drop into PythonAnywhere as the project's flask app. PA's WSGI
 file should import the module-level `app`:
 
-    # /var/www/<username>_pythonanywhere_com_wsgi.py
-    import sys
-    sys.path.insert(0, '/home/<username>/mysite')
-    from pose_zoo_flask_app import app as application
-
-Endpoints
----------
-    POST /api/v1/annotations/bbox  - JSON bounding-box annotation
-    POST /api/v1/annotations/pose  - multipart upload of a SLEAP .slp file
-    GET  /api/v1/health            - liveness
-    GET  /api/v1/docs              - Swagger UI
-    GET  /                         - landing page
-
-Configuration
--------------
-    DANDISET_ROOT     Local clone of the dandiset (default: ~/dandiset)
-    DANDI_INSTANCE    "dandi" (prod), "dandi-staging", "ember-dandi", ...
-    DANDI_API_TOKEN   Auth token for `dandi upload`, set as environment variable (loaded from private file)
-    MAX_SLP_BYTES     Default 524288000 (500 MB)
-    LOG_LEVEL         Default "INFO"
+Check `/api/v1/docs` for API reference.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,14 +15,13 @@ import os
 import subprocess
 import sys
 import uuid
-from http import HTTPStatus
-from pathlib import Path
+import http
+import pathlib
 
-from flask import Flask, request
-from flask_restx import Api, Namespace, Resource, fields, reqparse
-from flask_cors import CORS
-from werkzeug.datastructures import FileStorage
-
+import flask
+import flask_cors
+import flask_restx
+import werkzeug.datastructures
 
 # =============================================================================
 # Config
@@ -49,18 +30,17 @@ from werkzeug.datastructures import FileStorage
 VENV_BIN = "/home/CodyCBakerPhD/.virtualenvs/pose-zoo/bin"
 DANDI_BIN = f"{VENV_BIN}/dandi"
 
-api_key_file_path = Path('/home/CodyCBakerPhD/dandi_token')  # chmod 600
+api_key_file_path = pathlib.Path("/home/CodyCBakerPhD/dandi_token")  # chmod 600
 EMBER_DANDI_API_KEY = api_key_file_path.read_text().strip()
 
-DANDISET_ROOT = Path('/home/CodyCBakerPhD/mysite/000469')
-DANDI_INSTANCE = 'https://api-dandi.emberarchive.org/api'
+DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000469")
+DANDI_INSTANCE = "https://api-dandi.emberarchive.org/api"
 MAX_SLP_BYTES = int(os.environ.get("MAX_SLP_BYTES", str(500 * 1024 * 1024)))
-LOG_LEVEL = 'INFO'
+LOG_LEVEL = "INFO"
 
 # TODO: replace with HTTP call to ember-cache once that URL exists.
 CONTENT_ID_TO_DANDI_PATH = {
-    "59e7d85b-6827-4e62-977a-bab97c54df82":
-        "emberset-test0/sub-test1/sub-test1_ses-test2.nwb",
+    "59e7d85b-6827-4e62-977a-bab97c54df82": "emberset-test0/sub-test1/sub-test1_ses-test2.nwb",
 }
 
 
@@ -73,9 +53,7 @@ root_logger.setLevel(LOG_LEVEL)
 for h in list(root_logger.handlers):
     root_logger.removeHandler(h)
 _handler = logging.StreamHandler(sys.stderr)
-_handler.setFormatter(logging.Formatter(
-    "%(asctime)s %(levelname)s %(name)s :: %(message)s"
-))
+_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s :: %(message)s"))
 root_logger.addHandler(_handler)
 
 logger = logging.getLogger(__name__)
@@ -84,11 +62,12 @@ logger = logging.getLogger(__name__)
 class BadRequest(Exception):
     """Raised to return a 400 with a clean JSON body."""
 
+
 class RedactFilter(logging.Filter):
+    """Redact all secrets from server logs."""
+
     def __init__(self, secrets):
         super().__init__()
-        # Only redact non-empty secrets, longest first so substrings of
-        # longer secrets get caught.
         self._secrets = sorted([s for s in secrets if s], key=len, reverse=True)
 
     def filter(self, record):
@@ -109,7 +88,7 @@ _handler.addFilter(RedactFilter([EMBER_DANDI_API_KEY]))
 # =============================================================================
 
 
-def dandi_upload(file_path: Path) -> tuple[int, str, str]:
+def dandi_upload(file_path: pathlib.Path) -> tuple[int, str, str]:
     """Upload `file_path` to the configured DANDI instance. Returns (rc, stdout, stderr)."""
     env = os.environ.copy()
     env["EMBER_DANDI_API_KEY"] = EMBER_DANDI_API_KEY
@@ -128,7 +107,9 @@ def dandi_upload(file_path: Path) -> tuple[int, str, str]:
     )
     logger.info(
         "dandi upload rc=%d\nstdout: %s\nstderr: %s",
-        proc.returncode, proc.stdout, proc.stderr,
+        proc.returncode,
+        proc.stdout,
+        proc.stderr,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -138,50 +119,59 @@ def dandi_upload(file_path: Path) -> tuple[int, str, str]:
 # =============================================================================
 
 
-bbox_ns = Namespace(
+bbox_ns = Nflask_restx.amespace(
     "annotations-bbox",
     description="Frame-level bounding-box annotations against a source video",
 )
 
-box_model = bbox_ns.model("Box", {
-    "x": fields.Float(required=True),
-    "y": fields.Float(required=True),
-    "width": fields.Float(required=True, min=0),
-    "height": fields.Float(required=True, min=0),
-})
+box_model = bbox_ns.model(
+    "Box",
+    {
+        "x": flask_restx.fields.Float(required=True),
+        "y": flask_restx.fields.Float(required=True),
+        "width": flask_restx.fields.Float(required=True, min=0),
+        "height": flask_restx.fields.Float(required=True, min=0),
+    },
+)
 
-bbox_request = bbox_ns.model("BBoxAnnotation", {
-    "video_url": fields.String(required=True),
-    "frame_index": fields.Integer(required=True, min=0),
-    "total_frames": fields.Integer(required=True, min=1),
-    "fps": fields.Float(required=True, min=0),
-    "frame_width": fields.Integer(required=True, min=1),
-    "frame_height": fields.Integer(required=True, min=1),
-    "timestamp": fields.String(required=True),
-    "box": fields.Nested(box_model, required=True),
-})
+bbox_request = bbox_ns.model(
+    "BBoxAnnotation",
+    {
+        "video_url": flask_restx.fields.String(required=True),
+        "frame_index": flask_restx.fields.Integer(required=True, min=0),
+        "total_frames": flask_restx.fields.Integer(required=True, min=1),
+        "fps": flask_restx.fields.Float(required=True, min=0),
+        "frame_width": flask_restx.fields.Integer(required=True, min=1),
+        "frame_height": flask_restx.fields.Integer(required=True, min=1),
+        "timestamp": flask_restx.fields.String(required=True),
+        "box": flask_restx.fields.Nested(box_model, required=True),
+    },
+)
 
-bbox_response = bbox_ns.model("BBoxAnnotationResponse", {
-    "content_id": fields.String,
-    "bbox_file_path": fields.String,
-    "submission_id": fields.String,
-    "push_status": fields.String,
-    "push_message": fields.String,
-})
+bbox_response = bbox_ns.model(
+    "BBoxAnnotationResponse",
+    {
+        "content_id": flask_restx.fields.String,
+        "bbox_file_path": flask_restx.fields.String,
+        "submission_id": flask_restx.fields.String,
+        "push_status": flask_restx.fields.String,
+        "push_message": flask_restx.fields.String,
+    },
+)
 
 
 @bbox_ns.route("")
-class BBoxAnnotation(Resource):
+class BBoxAnnotation(flask_restx.Resource):
     @bbox_ns.expect(bbox_request, validate=False)
-    @bbox_ns.marshal_with(bbox_response, code=HTTPStatus.ACCEPTED)
+    @bbox_ns.marshal_with(bbox_response, code=http.HTTPStatus.ACCEPTED)
     def post(self):
         """Store one bounding-box annotation and push to DANDI."""
-        body = request.get_json(silent=True)
+        body = flask.request.get_json(silent=True)
         if not isinstance(body, dict):
             raise BadRequest("Request body must be a JSON object")
 
         content_id = body["video_url"].split("/")[-1]
-        dandi_path = CONTENT_ID_TO_DANDI_PATH.get(content_id, None)
+        dandi_path = CONTENT_ID_TO_DANDI_PATH.get(content_id)
         if dandi_path is None:
             raise BadRequest(f"Unknown content_id: {content_id}")
 
@@ -189,12 +179,7 @@ class BBoxAnnotation(Resource):
         submission_id = uuid.uuid4().hex
         body["submission_id"] = submission_id
 
-        bbox_file_path = (
-            DANDISET_ROOT
-            / "derivatives"
-            / "incoming"
-            / f"id-{submission_id}.json"
-        )
+        bbox_file_path = DANDISET_ROOT / "derivatives" / "incoming" / f"id-{submission_id}.json"
         bbox_file_path.parent.mkdir(parents=True, exist_ok=True)
         bbox_file_path.write_text(json.dumps(body, indent=2, sort_keys=True))
 
@@ -205,7 +190,7 @@ class BBoxAnnotation(Resource):
             "bbox_file_path": str(bbox_file_path),
             "submission_id": submission_id,
             "push_status": "succeeded" if rc == 0 else "failed",
-        }, HTTPStatus.ACCEPTED
+        }, http.HTTPStatus.ACCEPTED
 
 
 # =============================================================================
@@ -213,52 +198,57 @@ class BBoxAnnotation(Resource):
 # =============================================================================
 
 
-pose_ns = Namespace("annotations-pose", description="SLEAP .slp pose annotation uploads")
+pose_ns = flask_restx.Namespace("annotations-pose", description="SLEAP .slp pose annotation uploads")
 
-upload_parser = reqparse.RequestParser()
+upload_parser = flask_restx.reqparse.RequestParser()
 upload_parser.add_argument(
-    "file", location="files", type=FileStorage, required=True,
+    "file",
+    location="files",
+    type=werkzeug.datastructures.FileStorage,
+    required=True,
     help="The .slp file produced by SLEAP",
 )
 upload_parser.add_argument(
-    "video_url", location="form", type=str, required=True,
+    "video_url",
+    location="form",
+    type=str,
+    required=True,
     help="Blob URL of the source video; trailing segment is the content-id.",
 )
 
-pose_response = pose_ns.model("PoseAnnotationResponse", {
-    "content_id": fields.String,
-    "slp_file_path": fields.String,
-    "submission_id": fields.String,
-    "push_status": fields.String,
-    "push_message": fields.String,
-})
+pose_response = pose_ns.model(
+    "PoseAnnotationResponse",
+    {
+        "content_id": flask_restx.fields.String,
+        "slp_file_path": flask_restx.fields.String,
+        "submission_id": flask_restx.fields.String,
+        "push_status": flask_restx.fields.String,
+        "push_message": flask_restx.fields.String,
+    },
+)
 
 
 @pose_ns.route("")
-class PoseAnnotation(Resource):
+class PoseAnnotation(flask_restx.Resource):
     @pose_ns.expect(upload_parser)
-    @pose_ns.marshal_with(pose_response, code=HTTPStatus.ACCEPTED)
+    @pose_ns.marshal_with(pose_response, code=http.HTTPStatus.ACCEPTED)
     def post(self):
         """Store a SLEAP .slp file and push to DANDI."""
         args = upload_parser.parse_args()
-        upload: FileStorage = args["file"]
+        upload: werkzeug.datastructures.FileStorage = args["file"]
         video_url: str = args["video_url"]
 
         if not (upload.filename or "").lower().endswith(".slp"):
             raise BadRequest("Upload must be a .slp file")
 
-        content_id = video_url.split("/")[-1]
+        content_id = video_url.rsplit("/", maxsplit=1)[-1]
         try:
             dandi_path = CONTENT_ID_TO_DANDI_PATH[content_id]
         except KeyError:
             raise BadRequest(f"Unknown content_id: {content_id}")
 
         submission_id = uuid.uuid4().hex
-        slp_file_path = (
-            DANDISET_ROOT
-            / dandi_path.removesuffix(".nwb")
-            / f"pose_id-{submission_id}.slp"
-        )
+        slp_file_path = DANDISET_ROOT / dandi_path.removesuffix(".nwb") / f"pose_id-{submission_id}.slp"
         slp_file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Stream to disk with a size cap so a huge upload can't fill PA's quota.
@@ -282,7 +272,7 @@ class PoseAnnotation(Resource):
             "slp_file_path": str(slp_file_path),
             "submission_id": submission_id,
             "push_status": "succeeded" if rc == 0 else "failed",
-        }, HTTPStatus.ACCEPTED
+        }, http.HTTPStatus.ACCEPTED
 
 
 # =============================================================================
@@ -290,20 +280,20 @@ class PoseAnnotation(Resource):
 # =============================================================================
 
 
-health_ns = Namespace("health", description="Liveness")
+health_ns = flask_restx.Namespace("health", description="Liveness")
 
 
 @health_ns.route("")
-class Health(Resource):
+class Health(flask_restx.Resource):
     def get(self):
         checks = {
             "token_present": bool(EMBER_DANDI_API_TOKEN),
             "dandiset_root_exists": DANDISET_ROOT.exists(),
             "dandiset_yaml_exists": (DANDISET_ROOT / "dandiset.yaml").exists(),
-            "dandi_bin_exists": Path(DANDI_BIN).exists(),
+            "dandi_bin_exists": pathlib.Path(DANDI_BIN).exists(),
         }
         ok = all(checks.values())
-        return {"status": "ok"}, HTTPStatus.OK
+        return {"status": "ok"}, http.HTTPStatus.OK
 
 
 # =============================================================================
@@ -311,20 +301,20 @@ class Health(Resource):
 # =============================================================================
 
 
-def create_app() -> Flask:
+def create_app() -> flask.Flask:
     logging.basicConfig(
         level=LOG_LEVEL,
         format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
     )
 
-    flask_app = Flask(__name__)
-    CORS(
+    flask_app = flask.Flask(__name__)
+    flask.CORS(
         flask_app,
         resources={r"/api/*": {"origins": ["https://codycbakerphd.github.io"]}},
         methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
-    api = Api(
+    api = flask_restx.Api(
         flask_app,
         version="1.0",
         title="DANDI Annotation Ingest",
@@ -342,7 +332,7 @@ def create_app() -> Flask:
 
     @api.errorhandler(BadRequest)
     def _bad_request(err):
-        return {"message": str(err)}, HTTPStatus.BAD_REQUEST
+        return {"message": str(err)}, http.HTTPStatus.BAD_REQUEST
 
     @flask_app.route("/")
     def _index():

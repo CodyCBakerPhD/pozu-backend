@@ -119,7 +119,7 @@ def dandi_upload(file_path: pathlib.Path) -> tuple[int, str, str]:
 # =============================================================================
 
 
-bbox_ns = Nflask_restx.amespace(
+bbox_ns = flask_restx.Namespace(
     "annotations-bbox",
     description="Frame-level bounding-box annotations against a source video",
 )

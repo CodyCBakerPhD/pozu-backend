@@ -73,7 +73,7 @@ fixable = ["ALL"]
 
 [tool.ruff.lint.isort]
 relative-imports-order = "closest-to-furthest"
-known-first-party = ["pose_zoo_flask_app"]
+known-first-party = ["pozu_flask_app"]
 
 [tool.mypy]
 python_version = "3.10"

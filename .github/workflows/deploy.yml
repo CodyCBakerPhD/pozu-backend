@@ -22,7 +22,7 @@ jobs:
           script: |
             cd ~/your-project
             git pull origin main
-            
+
       - name: Reload webapp
         run: |
           curl -X POST \

@@ -18,7 +18,7 @@ jobs:
         with:
           host: ssh.pythonanywhere.com
           username: YOUR_PA_USERNAME
-          key: ${{ secrets.PA_SSH_KEY }}   # the private key contents
+          key: ${{ secrets.PA_SSH_KEY }}
           script: |
             cd ~/your-project
             git pull origin main
@@ -27,4 +27,4 @@ jobs:
         run: |
           curl -X POST \
             -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
-            "https://www.pythonanywhere.com/api/v0/user/YOUR_USERNAME/webapps/YOUR_USERNAME.pythonanywhere.com/reload/"
+            "https://www.pythonanywhere.com/api/v0/user/CodyCBakerPhD/webapps/pose-zoo-CodyCBakerPhD..pythonanywhere.com/reload/"

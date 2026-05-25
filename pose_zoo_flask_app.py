@@ -38,6 +38,7 @@ from pathlib import Path
 
 from flask import Flask, request
 from flask_restx import Api, Namespace, Resource, fields, reqparse
+from flask_cors import CORS
 from werkzeug.datastructures import FileStorage
 
 
@@ -317,6 +318,12 @@ def create_app() -> Flask:
     )
 
     flask_app = Flask(__name__)
+    CORS(
+        flask_app,
+        resources={r"/api/*": {"origins": ["https://codycbakerphd.github.io"]}},
+        methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
+    )
     api = Api(
         flask_app,
         version="1.0",

@@ -11,15 +11,16 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime
 import json
 import logging
 import os
-import subprocess
+import pathlib
 import sys
 import uuid
 import http
-import pathlib
 
+import filelock
 import flask
 import flask_cors
 import flask_restx
@@ -85,34 +86,26 @@ _handler.addFilter(RedactFilter([EMBER_DANDI_API_KEY]))
 
 
 # =============================================================================
-# Helper: invoke `dandi upload` for a file inside the dandiset
+# Helper: append a record to the current hour's JSONL buffer file
 # =============================================================================
 
 
-def dandi_upload(*, file_path: pathlib.Path, dandiset_root: pathlib.Path) -> tuple[int, str, str]:
-    """Upload `file_path` to the configured DANDI instance. Returns (rc, stdout, stderr)."""
-    env = os.environ.copy()
-    env["EMBER_DANDI_API_KEY"] = EMBER_DANDI_API_KEY
-    env["PATH"] = f"{VENV_BIN}:{env.get('PATH', '')}"
+def append_to_hourly_jsonl(record: dict, buffer_dir: pathlib.Path) -> pathlib.Path:
+    """Append *record* as a JSON line to the current-hour JSONL buffer.
 
-    cmd = [DANDI_BIN, "upload", "--dandi-instance", DANDI_INSTANCE]
-    logger.info("Running: %s (cwd=%s)", " ".join(cmd), dandiset_root)
-    proc = subprocess.run(
-        cmd,
-        cwd=dandiset_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    logger.info(
-        "dandi upload rc=%d\nstdout: %s\nstderr: %s",
-        proc.returncode,
-        proc.stdout,
-        proc.stderr,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
+    Uses a per-file lock so concurrent WSGI workers don't interleave writes.
+    Returns the path of the JSONL file written to.
+    """
+    hour_tag = datetime.datetime.utcnow().strftime("%Y-%m-%d-%H")
+    buffer_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = buffer_dir / f"{hour_tag}.jsonl"
+    lock_path = buffer_dir / f"{hour_tag}.jsonl.lock"
+
+    with filelock.FileLock(lock_path):
+        with jsonl_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+
+    return jsonl_path
 
 
 # =============================================================================
@@ -153,10 +146,8 @@ bbox_response = bbox_ns.model(
     "BBoxAnnotationResponse",
     {
         "content_id": flask_restx.fields.String,
-        "bbox_file_path": flask_restx.fields.String,
         "submission_id": flask_restx.fields.String,
         "push_status": flask_restx.fields.String,
-        "push_message": flask_restx.fields.String,
     },
 )
 
@@ -166,7 +157,7 @@ class BBoxAnnotation(flask_restx.Resource):
     @bbox_ns.expect(bbox_request, validate=False)
     @bbox_ns.marshal_with(bbox_response, code=http.HTTPStatus.ACCEPTED)
     def post(self):
-        """Store one bounding-box annotation and push to DANDI."""
+        """Queue one bounding-box annotation for the next hourly DANDI upload."""
         body = flask.request.get_json(silent=True)
         if not isinstance(body, dict):
             raise BadRequest("Request body must be a JSON object")
@@ -176,21 +167,17 @@ class BBoxAnnotation(flask_restx.Resource):
         if dandi_path is None:
             raise BadRequest(f"Unknown content_id: {content_id}")
 
-        frame_index = int(body["frame_index"])
         submission_id = uuid.uuid4().hex
         body["submission_id"] = submission_id
 
-        bbox_file_path = BBOX_DANDISET_ROOT / "derivatives" / "incoming" / f"id-{submission_id}.json"
-        bbox_file_path.parent.mkdir(parents=True, exist_ok=True)
-        bbox_file_path.write_text(json.dumps(body, indent=2, sort_keys=True))
-
-        rc, stdout, stderr = dandi_upload(file_path=bbox_file_path, dandiset_root=BBOX_DANDISET_ROOT)
+        buffer_dir = BBOX_DANDISET_ROOT / "derivatives" / "buffer"
+        append_to_hourly_jsonl(body, buffer_dir)
+        logger.info("Queued bbox annotation submission_id=%s content_id=%s", submission_id, content_id)
 
         return {
             "content_id": content_id,
-            "bbox_file_path": str(bbox_file_path),
             "submission_id": submission_id,
-            "push_status": "succeeded" if rc == 0 else "failed",
+            "push_status": "queued",
         }, http.HTTPStatus.ACCEPTED
 
 
@@ -216,10 +203,8 @@ labels_response = labels_ns.model(
     "LabelsAnnotationResponse",
     {
         "content_id": flask_restx.fields.String,
-        "labels_file_content": flask_restx.fields.String,
         "submission_id": flask_restx.fields.String,
         "push_status": flask_restx.fields.String,
-        "push_message": flask_restx.fields.String,
     },
 )
 
@@ -229,35 +214,37 @@ class LabelsAnnotation(flask_restx.Resource):
     @labels_ns.expect(labels_request, validate=False)
     @labels_ns.marshal_with(labels_response, code=http.HTTPStatus.ACCEPTED)
     def post(self):
-        """Store a SLEAP .slp file and push to DANDI."""
+        """Queue a SLEAP .slp file for the next hourly DANDI upload."""
         body = flask.request.get_json(silent=True)
         if not isinstance(body, dict):
             raise BadRequest("Request body must be a JSON object")
 
         video_url = body["video_url"]
-
         content_id = video_url.rsplit("/", maxsplit=1)[-1]
         if content_id not in CONTENT_ID_TO_DANDI_PATH:
             raise BadRequest(f"Unknown content_id: {content_id}")
 
         try:
-            labels_file_bytes = base64.b64decode(body["labels_file_content"], validate=True)
+            base64.b64decode(body["labels_file_content"], validate=True)
         except (binascii.Error, TypeError) as exc:
             raise BadRequest("labels_file_content must be valid base64-encoded bytes") from exc
 
         submission_id = uuid.uuid4().hex
-        labels_file_path = LABELS_DANDISET_ROOT / "derivatives" / "incoming" / f"id-{submission_id}.slp"
-        labels_file_path.parent.mkdir(parents=True, exist_ok=True)
-        labels_file_path.write_bytes(labels_file_bytes)
-        logger.info("Wrote labels SLP (%d bytes) -> %s", len(labels_file_bytes), labels_file_path)
+        record = {
+            "submission_id": submission_id,
+            "content_id": content_id,
+            "video_url": video_url,
+            "labels_file_content": body["labels_file_content"],
+        }
 
-        rc, stdout, stderr = dandi_upload(file_path=labels_file_path, dandiset_root=LABELS_DANDISET_ROOT)
+        buffer_dir = LABELS_DANDISET_ROOT / "derivatives" / "buffer"
+        append_to_hourly_jsonl(record, buffer_dir)
+        logger.info("Queued labels submission_id=%s content_id=%s", submission_id, content_id)
 
         return {
             "content_id": content_id,
-            "labels_file_content": body["labels_file_content"],
             "submission_id": submission_id,
-            "push_status": "succeeded" if rc == 0 else "failed",
+            "push_status": "queued",
         }, http.HTTPStatus.ACCEPTED
 
 
@@ -273,13 +260,13 @@ health_ns = flask_restx.Namespace("health", description="Liveness")
 class Health(flask_restx.Resource):
     def get(self):
         checks = {
-            "token_present": bool(EMBER_DANDI_API_TOKEN),
+            "token_present": bool(EMBER_DANDI_API_KEY),
             "dandiset_root_exists": BBOX_DANDISET_ROOT.exists(),
             "dandiset_yaml_exists": (BBOX_DANDISET_ROOT / "dandiset.yaml").exists(),
             "dandi_bin_exists": pathlib.Path(DANDI_BIN).exists(),
         }
         ok = all(checks.values())
-        return {"status": "ok"}, http.HTTPStatus.OK
+        return {"status": "ok" if ok else "degraded", "checks": checks}, http.HTTPStatus.OK
 
 
 # =============================================================================
@@ -306,7 +293,7 @@ def create_app() -> flask.Flask:
         title="DANDI Annotation Ingest",
         description=(
             "Accepts per-frame bounding-box annotations and SLEAP .slp label files, "
-            "organizes them inside a local dandiset clone, and uploads to DANDI."
+            "queues them in hourly JSONL buffers, and uploads to DANDI via a scheduled CRON job."
         ),
         doc="/api/v1/docs",
         prefix="/api/v1",

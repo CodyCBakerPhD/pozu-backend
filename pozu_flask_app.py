@@ -186,7 +186,7 @@ class BBoxAnnotation(flask_restx.Resource):
 # =============================================================================
 
 
-labels_ns = flask_restx.Namespace("annotations-labels", description="SLEAP .slp labels uploads")
+labels_ns = flask_restx.Namespace("annotations-labels", description="SLEAP labels uploads")
 
 labels_request = labels_ns.model(
     "LabelsAnnotation",
@@ -196,6 +196,16 @@ labels_request = labels_ns.model(
             required=True,
             description="Base64-encoded bytes of the .slp file produced by SLEAP",
         ),
+    },
+)
+
+labels_record = labels_ns.model(
+    "LabelsRecord",
+    {
+        "submission_id": flask_restx.fields.String(description="UUID hex identifying this submission"),
+        "content_id": flask_restx.fields.String(description="Asset identifier extracted from video_url"),
+        "video_url": flask_restx.fields.String(description="Source video URL"),
+        "labels_file_content": flask_restx.fields.String(description="Base64-encoded .slp file bytes"),
     },
 )
 
@@ -214,7 +224,7 @@ class LabelsAnnotation(flask_restx.Resource):
     @labels_ns.expect(labels_request, validate=False)
     @labels_ns.marshal_with(labels_response, code=http.HTTPStatus.ACCEPTED)
     def post(self):
-        """Queue a SLEAP .slp file for the next hourly DANDI upload."""
+        """Queue a SLEAP labels submission for the next hourly DANDI upload."""
         body = flask.request.get_json(silent=True)
         if not isinstance(body, dict):
             raise BadRequest("Request body must be a JSON object")
@@ -230,7 +240,7 @@ class LabelsAnnotation(flask_restx.Resource):
             raise BadRequest("labels_file_content must be valid base64-encoded bytes") from exc
 
         submission_id = uuid.uuid4().hex
-        record = {
+        record: dict = {
             "submission_id": submission_id,
             "content_id": content_id,
             "video_url": video_url,

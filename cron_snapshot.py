@@ -19,7 +19,6 @@ What it does:
 
 from __future__ import annotations
 
-import base64
 import datetime
 import json
 import logging
@@ -129,7 +128,7 @@ def process_bbox_buffer(dandiset_root: pathlib.Path, current_hour_tag: str) -> l
 
 
 def process_labels_buffer(dandiset_root: pathlib.Path, current_hour_tag: str) -> list[pathlib.Path]:
-    """Reconstruct individual .slp files from completed labels JSONL buffers.
+    """Write individual .json records from completed labels JSONL buffers.
 
     Returns the list of reconstructed file paths (to be cleaned up after upload).
     """
@@ -153,9 +152,8 @@ def process_labels_buffer(dandiset_root: pathlib.Path, current_hour_tag: str) ->
                     continue
                 record = json.loads(line)
                 submission_id = record.get("submission_id") or uuid.uuid4().hex
-                labels_bytes = base64.b64decode(record["labels_file_content"])
-                out_path = incoming_dir / f"id-{submission_id}.slp"
-                out_path.write_bytes(labels_bytes)
+                out_path = incoming_dir / f"id-{submission_id}.json"
+                out_path.write_text(json.dumps(record, indent=2, sort_keys=True))
                 reconstructed.append(out_path)
 
         shutil.move(str(jsonl_file), str(snapshots_dir / jsonl_file.name))

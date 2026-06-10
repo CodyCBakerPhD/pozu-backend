@@ -7,12 +7,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Pull latest code on PythonAnywhere
-        run: |
-          curl -X POST \
-            -H "Authorization: Token ${{ secrets.PA_API_TOKEN }}" \
-            "https://www.pythonanywhere.com/api/v0/user/CodyCBakerPhD/webapps/pozu-CodyCBakerPhD.pythonanywhere.com/"
-
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.0
         with:

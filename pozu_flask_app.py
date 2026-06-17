@@ -41,6 +41,7 @@ LOG_LEVEL = "INFO"
 # TODO: replace with HTTP call to ember-cache once that URL exists.
 CONTENT_ID_TO_DANDI_PATH = {
     "59e7d85b-6827-4e62-977a-bab97c54df82": "emberset-test0/sub-test1/sub-test1_ses-test2.nwb",
+    "b2871cfe-b785-41cf-9a72-4a94a625fd26": "emberset-test0/sub-test1/sub-test1_ses-test2.nwb",
 }
 
 

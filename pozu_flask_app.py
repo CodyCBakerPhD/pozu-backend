@@ -35,7 +35,7 @@ VENV_BIN = "/home/CodyCBakerPhD/.virtualenvs/pozu/bin"
 DANDI_BIN = f"{VENV_BIN}/dandi"
 
 
-def load_secret(*, env_var, file_path):
+def load_secret(*, env_var: str, file_path: str) -> str:
     """Load a secret from an environment variable, falling back to a chmod-600 file.
 
     Returns an empty string when neither source is present. This keeps the module
@@ -341,7 +341,7 @@ class Health(flask_restx.Resource):
 # =============================================================================
 
 
-def mint_app_token(github_user, /):
+def mint_app_token(github_user: dict, /) -> str:
     """Mint a short-lived signed JWT identifying the authenticated GitHub user.
 
     The SPA is hosted cross-site from this backend, so rather than a third-party
@@ -361,7 +361,7 @@ def mint_app_token(github_user, /):
     return jwt.encode(payload, APP_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
-def register_github_oauth_routes(flask_app, /):
+def register_github_oauth_routes(flask_app: flask.Flask, /) -> None:
     """Register the top-level GitHub OAuth login and callback routes.
 
     These are plain Flask routes rather than Flask-RESTX resources because they

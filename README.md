@@ -25,7 +25,30 @@ That environment was set up using:
 mkvirtualenv --python=/usr/bin/python3.11 pozu
 
 pip install --upgrade pip
-pip install flask flask-restx flask-cors requests filelock dandi
+pip install flask flask-restx flask-cors requests filelock dandi pyjwt
 ```
 
 from a bash console.
+
+
+### GitHub OAuth
+
+The backend supports signing in with GitHub using the web application (authorization code) flow.
+
+Register an OAuth app at https://github.com/settings/developers with this Authorization callback URL.
+
+```
+https://pozu-codycbakerphd.pythonanywhere.com/auth/github/callback
+```
+
+The flow uses two top-level routes. `GET /auth/github/login` redirects the browser to GitHub, and `GET /auth/github/callback` completes the handshake. The callback exchanges the code for a GitHub token, reads the user profile, then mints a short-lived signed JWT. It redirects back to the frontend with that token in the URL fragment. The frontend stores the token and replays it as an `Authorization: Bearer <token>` header on later API calls. A cross-site session cookie is deliberately avoided because the frontend (GitHub Pages) and backend (PythonAnywhere) are on different sites, where third-party cookies are unreliable.
+
+Secrets are read from an environment variable first, then from a chmod-600 file, matching the existing `dandi_token` pattern. Create these files on the deployment.
+
+```
+/home/CodyCBakerPhD/github_oauth_client_id
+/home/CodyCBakerPhD/github_oauth_client_secret
+/home/CodyCBakerPhD/app_secret_key
+```
+
+`app_secret_key` signs both the OAuth `state` cookie and the JWT. Generate at least 32 random bytes for it, for example with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. After creating or changing any of these files, reload the web app from the PythonAnywhere dashboard.

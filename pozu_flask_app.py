@@ -72,7 +72,7 @@ GITHUB_CLIENT_SECRET = load_secret(
 APP_SECRET_KEY = load_secret(env_var="APP_SECRET_KEY", file_path="/home/CodyCBakerPhD/app_secret_key")
 
 # Where the SPA lives. The callback redirects here with the freshly minted JWT.
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://codycbakerphd.github.io")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://pozu-project.github.io/pozu/")
 
 JWT_ALGORITHM = "HS256"
 JWT_ISSUER = "pozu-backend"
@@ -450,7 +450,7 @@ def create_app() -> flask.Flask:
     flask_app.secret_key = APP_SECRET_KEY or secrets.token_urlsafe(32)
     flask_cors.CORS(
         flask_app,
-        resources={r"/api/.*": {"origins": ["https://codycbakerphd.github.io"]}},
+        resources={r"/api/.*": {"origins": ["https://pozu-project.github.io"]}},
         methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
     )

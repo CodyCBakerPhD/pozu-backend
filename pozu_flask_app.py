@@ -440,9 +440,7 @@ REPORT_OTHER_REASON = "other"
 SUGGESTED_REPORT_REASONS = (
     "inappropriate_content",
     "graphic_or_violent",
-    "no_subject_present",
-    "wrong_subject",
-    "low_quality_or_corrupted",
+    "corrupted_frame",
     REPORT_OTHER_REASON,
 )
 

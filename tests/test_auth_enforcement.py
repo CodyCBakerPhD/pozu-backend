@@ -18,6 +18,8 @@ VIDEO_URL = f"https://example.org/videos/{CONTENT_ID}"
 
 ENDPOINTS = ["/api/v1/annotations/bbox", "/api/v1/annotations/labels"]
 
+ALLOWED_ORIGIN = "https://pozu-project.github.io"
+
 
 @pytest.fixture
 def client(monkeypatch):
@@ -100,6 +102,17 @@ def test_post_rejects_unauthenticated_requests(client, endpoint, headers_factory
 
     assert response.status_code == http.HTTPStatus.UNAUTHORIZED
     assert "message" in response.get_json()
+
+
+@pytest.mark.ai_generated
+@pytest.mark.parametrize("endpoint", ENDPOINTS)
+def test_unauthorized_response_carries_cors_header(client, endpoint):
+    # Without the CORS header on the 401 the browser masks it as an opaque
+    # network error, so the SPA never sees the status and cannot prompt a re-login.
+    response = client.post(endpoint, json=_annotation_body(), headers={"Origin": ALLOWED_ORIGIN})
+
+    assert response.status_code == http.HTTPStatus.UNAUTHORIZED
+    assert response.headers.get("Access-Control-Allow-Origin") == ALLOWED_ORIGIN
 
 
 @pytest.mark.ai_generated

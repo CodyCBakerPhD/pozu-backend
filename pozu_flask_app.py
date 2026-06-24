@@ -92,6 +92,11 @@ JWT_TTL_SECONDS = 3600
 
 BBOX_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000469")
 LABELS_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000470")
+# Frame reports flag content as inappropriate/problematic. They are moderation
+# signals, not annotation data, so they are buffered under their own root rather
+# than inside a dandiset and are deliberately NOT swept into the DANDI upload by
+# cron_snapshot.py; they are reviewed out-of-band.
+REPORTS_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/reports")
 DANDI_INSTANCE = "https://api-dandi.emberarchive.org/api"
 LOG_LEVEL = "INFO"
 
@@ -415,6 +420,117 @@ class LabelsAnnotation(flask_restx.Resource):
 
 
 # =============================================================================
+# Frame reports namespace
+# =============================================================================
+
+
+reports_ns = flask_restx.Namespace(
+    "reports",
+    description="User reports flagging a video frame as inappropriate or otherwise problematic",
+)
+
+# Free-text catch-all reason. The frontend modal surfaces a list of canned
+# suggestions plus an 'Other' choice with a write-in box (see pozu issue #56).
+REPORT_OTHER_REASON = "other"
+
+# Suggested reason codes, documented for the Swagger UI. The backend intentionally
+# does NOT hard-enforce this set so the frontend can refine its suggestion list
+# without a coordinated backend deploy; the only enforced rule is that the
+# free-text 'other' reason must carry a written explanation in `details`.
+SUGGESTED_REPORT_REASONS = (
+    "inappropriate_content",
+    "graphic_or_violent",
+    "sexual_content",
+    "no_subject_present",
+    "wrong_subject",
+    "low_quality_or_corrupted",
+    REPORT_OTHER_REASON,
+)
+
+reported_frame_request = reports_ns.model(
+    "ReportedFrame",
+    {
+        "video_url": flask_restx.fields.String(required=True),
+        "frame_index": flask_restx.fields.Integer(required=True, min=0),
+        "total_frames": flask_restx.fields.Integer(required=True, min=1),
+        "fps": flask_restx.fields.Float(required=True, min=0),
+        "frame_width": flask_restx.fields.Integer(required=True, min=1),
+        "frame_height": flask_restx.fields.Integer(required=True, min=1),
+        "timestamp": flask_restx.fields.String(required=True),
+        "reason": flask_restx.fields.String(
+            required=True,
+            enum=list(SUGGESTED_REPORT_REASONS),
+            description="Why the frame is being reported. One of the suggested codes, or 'other'.",
+        ),
+        "details": flask_restx.fields.String(
+            required=False,
+            description="Free-text explanation. Required when `reason` is 'other'.",
+        ),
+    },
+)
+
+reported_frame_response = reports_ns.model(
+    "ReportedFrameResponse",
+    {
+        "content_id": flask_restx.fields.String,
+        "submission_id": flask_restx.fields.String,
+        "push_status": flask_restx.fields.String,
+    },
+)
+
+
+@reports_ns.route("")
+class ReportedFrame(flask_restx.Resource):
+    @require_auth
+    @reports_ns.expect(reported_frame_request, validate=False)
+    @reports_ns.marshal_with(reported_frame_response, code=http.HTTPStatus.ACCEPTED)
+    def post(self):
+        """Queue a report flagging a single frame as inappropriate or problematic."""
+        body = flask.request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise BadRequest("Request body must be a JSON object")
+
+        video_url = body.get("video_url")
+        if not isinstance(video_url, str) or not video_url:
+            raise BadRequest("'video_url' is required")
+        content_id = video_url.rsplit("/", maxsplit=1)[-1]
+        if content_id not in CONTENT_ID_TO_DANDI_PATH:
+            raise BadRequest(f"Unknown content_id: {content_id}")
+
+        reason = body.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise BadRequest("'reason' is required")
+        reason = reason.strip()
+
+        details = body.get("details")
+        if details is not None and not isinstance(details, str):
+            raise BadRequest("'details' must be a string when provided")
+        # The 'Other' suggestion is meaningless without the write-in text.
+        if reason.lower() == REPORT_OTHER_REASON and not (isinstance(details, str) and details.strip()):
+            raise BadRequest("'details' is required when reason is 'other'")
+
+        submission_id = uuid.uuid4().hex
+        submitted_by = flask.g.user.get("login") or flask.g.user["sub"]
+        record: dict = {
+            "submission_id": submission_id,
+            "content_id": content_id,
+            "submitted_by": submitted_by,
+            **body,
+            "reason": reason,
+        }
+
+        buffer_dir = REPORTS_ROOT / "buffer"
+        append_to_hourly_jsonl(record, buffer_dir)
+        logger.info("Queued frame report submission_id=%s content_id=%s reason=%s", submission_id, content_id, reason)
+
+        return {
+            "content_id": content_id,
+            "submission_id": submission_id,
+            "push_status": "queued",
+        }, http.HTTPStatus.ACCEPTED
+
+
+# =============================================================================
 # Health namespace
 # =============================================================================
 
@@ -564,7 +680,8 @@ def create_app() -> flask.Flask:
         title="DANDI Annotation Ingest",
         description=(
             "Accepts per-frame bounding-box annotations and SLEAP .slp label files, "
-            "queues them in hourly JSONL buffers, and uploads to DANDI via a scheduled CRON job."
+            "queues them in hourly JSONL buffers, and uploads to DANDI via a scheduled CRON job. "
+            "Also accepts frame reports flagging inappropriate or problematic content."
         ),
         doc="/api/v1/docs",
         prefix="/api/v1",
@@ -572,6 +689,7 @@ def create_app() -> flask.Flask:
 
     api.add_namespace(bbox_ns, path="/annotations/bbox")
     api.add_namespace(labels_ns, path="/annotations/labels")
+    api.add_namespace(reports_ns, path="/reports")
     api.add_namespace(health_ns, path="/health")
 
     @api.errorhandler(BadRequest)

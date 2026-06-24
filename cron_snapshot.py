@@ -33,6 +33,7 @@ EMBER_DANDI_API_KEY = api_key_file_path.read_text().strip()
 
 BBOX_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000469")
 LABELS_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000470")
+NO_SUBJECT_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000471")
 DANDI_INSTANCE = "https://api-dandi.emberarchive.org/api"
 
 # =============================================================================
@@ -96,7 +97,7 @@ def main() -> None:
     current_hour_tag = datetime.datetime.utcnow().strftime("%Y-%m-%d-%H")
     logger.info("cron_snapshot starting (current hour: %s)", current_hour_tag)
 
-    for dandiset_root in [BBOX_DANDISET_ROOT, LABELS_DANDISET_ROOT]:
+    for dandiset_root in [BBOX_DANDISET_ROOT, LABELS_DANDISET_ROOT, NO_SUBJECT_DANDISET_ROOT]:
         staged = stage_completed_buffers(dandiset_root, current_hour_tag)
         if staged:
             logger.info("Staged %d file(s) for %s; running dandi upload", len(staged), dandiset_root.name)

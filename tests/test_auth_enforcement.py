@@ -16,7 +16,11 @@ APP_SECRET = "test-app-secret-at-least-32-bytes-long"
 CONTENT_ID = next(iter(pozu_flask_app.CONTENT_ID_TO_DANDI_PATH))
 VIDEO_URL = f"https://example.org/videos/{CONTENT_ID}"
 
-ENDPOINTS = ["/api/v1/annotations/bbox", "/api/v1/annotations/labels"]
+ENDPOINTS = [
+    "/api/v1/annotations/bbox",
+    "/api/v1/annotations/labels",
+    "/api/v1/annotations/no-subject",
+]
 
 ALLOWED_ORIGIN = "https://pozu-project.github.io"
 

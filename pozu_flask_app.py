@@ -92,6 +92,12 @@ JWT_TTL_SECONDS = 3600
 
 BBOX_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000469")
 LABELS_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000470")
+# "No subject present" is a legitimate annotation outcome (the frame genuinely
+# contains no subject to box/label), so it is real data that uploads to DANDI like
+# the other annotation routes. It gets its own dandiset; provision 000471 on the
+# deployment (a `dandiset.yaml` plus a `derivatives/` tree) the same way as the
+# bbox/labels dandisets, or update this path to the assigned dandiset id.
+NO_SUBJECT_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000471")
 # Frame reports flag content as inappropriate/problematic. They are moderation
 # signals, not annotation data, so they are buffered under their own root rather
 # than inside a dandiset and are deliberately NOT swept into the DANDI upload by
@@ -420,6 +426,80 @@ class LabelsAnnotation(flask_restx.Resource):
 
 
 # =============================================================================
+# No-subject namespace
+# =============================================================================
+
+
+no_subject_ns = flask_restx.Namespace(
+    "annotations-no-subject",
+    description="Records a frame as containing no subject to annotate (the negative case)",
+)
+
+no_subject_request = no_subject_ns.model(
+    "NoSubjectFrame",
+    {
+        "video_url": flask_restx.fields.String(required=True),
+        "frame_index": flask_restx.fields.Integer(required=True, min=0),
+        "total_frames": flask_restx.fields.Integer(required=True, min=1),
+        "fps": flask_restx.fields.Float(required=True, min=0),
+        "frame_width": flask_restx.fields.Integer(required=True, min=1),
+        "frame_height": flask_restx.fields.Integer(required=True, min=1),
+        "timestamp": flask_restx.fields.String(required=True),
+    },
+)
+
+no_subject_response = no_subject_ns.model(
+    "NoSubjectFrameResponse",
+    {
+        "content_id": flask_restx.fields.String,
+        "submission_id": flask_restx.fields.String,
+        "push_status": flask_restx.fields.String,
+    },
+)
+
+
+@no_subject_ns.route("")
+class NoSubjectFrame(flask_restx.Resource):
+    @require_auth
+    @no_subject_ns.expect(no_subject_request, validate=False)
+    @no_subject_ns.marshal_with(no_subject_response, code=http.HTTPStatus.ACCEPTED)
+    def post(self):
+        """Queue a 'no subject present' annotation for the next hourly DANDI upload."""
+        body = flask.request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise BadRequest("Request body must be a JSON object")
+
+        video_url = body.get("video_url")
+        if not isinstance(video_url, str) or not video_url:
+            raise BadRequest("'video_url' is required")
+        content_id = video_url.rsplit("/", maxsplit=1)[-1]
+        if content_id not in CONTENT_ID_TO_DANDI_PATH:
+            raise BadRequest(f"Unknown content_id: {content_id}")
+
+        submission_id = uuid.uuid4().hex
+        submitted_by = flask.g.user.get("login") or flask.g.user["sub"]
+        # Stamp the determination into the record so the buffered JSONL is
+        # self-describing regardless of which route produced it.
+        record: dict = {
+            "submission_id": submission_id,
+            "content_id": content_id,
+            "submitted_by": submitted_by,
+            **body,
+            "no_subject": True,
+        }
+
+        buffer_dir = NO_SUBJECT_DANDISET_ROOT / "derivatives" / "buffer"
+        append_to_hourly_jsonl(record, buffer_dir)
+        logger.info("Queued no-subject annotation submission_id=%s content_id=%s", submission_id, content_id)
+
+        return {
+            "content_id": content_id,
+            "submission_id": submission_id,
+            "push_status": "queued",
+        }, http.HTTPStatus.ACCEPTED
+
+
+# =============================================================================
 # Frame reports namespace
 # =============================================================================
 
@@ -686,6 +766,7 @@ def create_app() -> flask.Flask:
 
     api.add_namespace(bbox_ns, path="/annotations/bbox")
     api.add_namespace(labels_ns, path="/annotations/labels")
+    api.add_namespace(no_subject_ns, path="/annotations/no-subject")
     api.add_namespace(reports_ns, path="/reports")
     api.add_namespace(health_ns, path="/health")
 

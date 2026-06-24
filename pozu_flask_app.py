@@ -441,11 +441,11 @@ no_subject_request = no_subject_ns.model(
     {
         "video_url": flask_restx.fields.String(required=True),
         "frame_index": flask_restx.fields.Integer(required=True, min=0),
-        "total_frames": flask_restx.fields.Integer(required=True, min=1),
-        "fps": flask_restx.fields.Float(required=True, min=0),
-        "frame_width": flask_restx.fields.Integer(required=True, min=1),
-        "frame_height": flask_restx.fields.Integer(required=True, min=1),
-        "timestamp": flask_restx.fields.String(required=True),
+        "total_frames": flask_restx.fields.Integer(min=1),
+        "fps": flask_restx.fields.Float(min=0),
+        "frame_width": flask_restx.fields.Integer(min=1),
+        "frame_height": flask_restx.fields.Integer(min=1),
+        "timestamp": flask_restx.fields.String(),
     },
 )
 
@@ -530,11 +530,11 @@ reported_frame_request = reports_ns.model(
     {
         "video_url": flask_restx.fields.String(required=True),
         "frame_index": flask_restx.fields.Integer(required=True, min=0),
-        "total_frames": flask_restx.fields.Integer(required=True, min=1),
-        "fps": flask_restx.fields.Float(required=True, min=0),
-        "frame_width": flask_restx.fields.Integer(required=True, min=1),
-        "frame_height": flask_restx.fields.Integer(required=True, min=1),
-        "timestamp": flask_restx.fields.String(required=True),
+        "total_frames": flask_restx.fields.Integer(min=1),
+        "fps": flask_restx.fields.Float(min=0),
+        "frame_width": flask_restx.fields.Integer(min=1),
+        "frame_height": flask_restx.fields.Integer(min=1),
+        "timestamp": flask_restx.fields.String(),
         "reason": flask_restx.fields.String(
             required=True,
             enum=list(SUGGESTED_REPORT_REASONS),

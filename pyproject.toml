@@ -1,3 +1,8 @@
+[tool.pytest.ini_options]
+markers = [
+    "ai_generated: tests authored with AI assistance",
+]
+
 [tool.black]
 line-length = 120
 target-version = ['py312']

@@ -38,11 +38,6 @@ def _body(**overrides):
     body = {
         "video_url": VIDEO_URL,
         "frame_index": 7,
-        "total_frames": 100,
-        "fps": 30.0,
-        "frame_width": 640,
-        "frame_height": 480,
-        "timestamp": "2026-06-24T00:00:00Z",
     }
     body.update(overrides)
     return body

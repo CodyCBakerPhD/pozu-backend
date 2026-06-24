@@ -94,10 +94,10 @@ BBOX_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000469")
 LABELS_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000470")
 # "No subject present" is a legitimate annotation outcome (the frame genuinely
 # contains no subject to box/label), so it is real data that uploads to DANDI like
-# the other annotation routes. It gets its own dandiset; provision 000471 on the
-# deployment (a `dandiset.yaml` plus a `derivatives/` tree) the same way as the
-# bbox/labels dandisets, or update this path to the assigned dandiset id.
-NO_SUBJECT_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000471")
+# the other annotation routes. Dandiset 000472 is reserved for it; provision it on
+# the deployment (a `dandiset.yaml` plus a `derivatives/` tree) the same way as the
+# bbox/labels dandisets.
+NO_SUBJECT_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000472")
 # Frame reports flag content as inappropriate/problematic. They are moderation
 # signals, not annotation data, so they are buffered under their own root rather
 # than inside a dandiset and are deliberately NOT swept into the DANDI upload by

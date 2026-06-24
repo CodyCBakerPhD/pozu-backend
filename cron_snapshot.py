@@ -33,7 +33,7 @@ EMBER_DANDI_API_KEY = api_key_file_path.read_text().strip()
 
 BBOX_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000469")
 LABELS_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000470")
-NO_SUBJECT_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000471")
+NO_SUBJECT_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000472")
 DANDI_INSTANCE = "https://api-dandi.emberarchive.org/api"
 
 # =============================================================================

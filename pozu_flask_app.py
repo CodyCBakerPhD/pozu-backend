@@ -10,6 +10,7 @@ Check `/api/v1/docs` for API reference.
 from __future__ import annotations
 
 import datetime
+import functools
 import json
 import logging
 import os
@@ -109,6 +110,10 @@ class BadRequest(Exception):
     """Raised to return a 400 with a clean JSON body."""
 
 
+class Unauthorized(Exception):
+    """Raised to return a 401 with a clean JSON body."""
+
+
 class RedactFilter(logging.Filter):
     """Redact all secrets from server logs."""
 
@@ -150,6 +155,50 @@ def append_to_hourly_jsonl(record: dict, buffer_dir: pathlib.Path) -> pathlib.Pa
             fh.write(json.dumps(record, sort_keys=True) + "\n")
 
     return jsonl_path
+
+
+# =============================================================================
+# Auth helpers (JWT enforcement)
+# =============================================================================
+
+
+def decode_app_token(token, /) -> dict:
+    """Verify and decode an app JWT, returning its claims.
+
+    Enforces the signing algorithm, the expected issuer, and the presence of the
+    ``exp``, ``iss``, and ``sub`` claims. Raises ``jwt.PyJWTError`` on any failure.
+    """
+    return jwt.decode(
+        token,
+        APP_SECRET_KEY,
+        algorithms=[JWT_ALGORITHM],
+        issuer=JWT_ISSUER,
+        options={"require": ["exp", "iss", "sub"]},
+    )
+
+
+def require_auth(handler, /):
+    """Decorate a resource handler to require a valid app JWT.
+
+    Reads the ``Authorization: Bearer <jwt>`` header, rejecting a missing or
+    malformed header and any invalid or expired token with ``Unauthorized``. On
+    success the decoded claims are stashed on ``flask.g.user`` for the handler.
+    """
+
+    @functools.wraps(handler)
+    def wrapper(*args, **kwargs):
+        header = flask.request.headers.get("Authorization", "")
+        scheme, _, token = header.partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            raise Unauthorized("Missing or malformed Authorization header")
+        try:
+            claims = decode_app_token(token)
+        except jwt.PyJWTError:
+            raise Unauthorized("Invalid or expired token")
+        flask.g.user = claims
+        return handler(*args, **kwargs)
+
+    return wrapper
 
 
 # =============================================================================
@@ -198,6 +247,7 @@ bbox_response = bbox_ns.model(
 
 @bbox_ns.route("")
 class BBoxAnnotation(flask_restx.Resource):
+    @require_auth
     @bbox_ns.expect(bbox_request, validate=False)
     @bbox_ns.marshal_with(bbox_response, code=http.HTTPStatus.ACCEPTED)
     def post(self):
@@ -213,6 +263,7 @@ class BBoxAnnotation(flask_restx.Resource):
 
         submission_id = uuid.uuid4().hex
         body["submission_id"] = submission_id
+        body["submitted_by"] = flask.g.user.get("login") or flask.g.user["sub"]
 
         buffer_dir = BBOX_DANDISET_ROOT / "derivatives" / "buffer"
         append_to_hourly_jsonl(body, buffer_dir)
@@ -285,6 +336,7 @@ labels_response = labels_ns.model(
 
 @labels_ns.route("")
 class LabelsAnnotation(flask_restx.Resource):
+    @require_auth
     @labels_ns.expect(labels_request, validate=False)
     @labels_ns.marshal_with(labels_response, code=http.HTTPStatus.ACCEPTED)
     def post(self):
@@ -302,7 +354,8 @@ class LabelsAnnotation(flask_restx.Resource):
             raise BadRequest("'labels' must be a list of keypoint objects")
 
         submission_id = uuid.uuid4().hex
-        record: dict = {"submission_id": submission_id, "content_id": content_id, **body}
+        submitted_by = flask.g.user.get("login") or flask.g.user["sub"]
+        record: dict = {"submission_id": submission_id, "content_id": content_id, "submitted_by": submitted_by, **body}
 
         buffer_dir = LABELS_DANDISET_ROOT / "derivatives" / "buffer"
         append_to_hourly_jsonl(record, buffer_dir)
@@ -474,11 +527,19 @@ def create_app() -> flask.Flask:
     def _bad_request(err):
         return {"message": str(err)}, http.HTTPStatus.BAD_REQUEST
 
-    # The RESTX error handler above only covers resources under the API; the
-    # top-level OAuth routes need a Flask-level handler for the same exception.
+    @api.errorhandler(Unauthorized)
+    def _unauthorized(err):
+        return {"message": str(err)}, http.HTTPStatus.UNAUTHORIZED
+
+    # The RESTX error handlers above only cover resources under the API; the
+    # top-level OAuth routes need Flask-level handlers for the same exceptions.
     @flask_app.errorhandler(BadRequest)
     def _bad_request_flask(err):
         return flask.jsonify({"message": str(err)}), http.HTTPStatus.BAD_REQUEST
+
+    @flask_app.errorhandler(Unauthorized)
+    def _unauthorized_flask(err):
+        return flask.jsonify({"message": str(err)}), http.HTTPStatus.UNAUTHORIZED
 
     register_github_oauth_routes(flask_app)
 

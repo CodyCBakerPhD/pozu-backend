@@ -92,6 +92,18 @@ JWT_TTL_SECONDS = 3600
 
 BBOX_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000469")
 LABELS_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000470")
+# "No subject present" is a legitimate annotation outcome (the frame genuinely
+# contains no subject to box/label), so it is real data that uploads to DANDI like
+# the other annotation routes. Dandiset 000472 is reserved for it; provision it on
+# the deployment (a `dandiset.yaml` plus a `derivatives/` tree) the same way as the
+# bbox/labels dandisets.
+NO_SUBJECT_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000472")
+# Frame reports flag content as inappropriate/problematic. Dandiset 000473 is
+# reserved for them, so they buffer inside that dandiset and are swept into the
+# hourly DANDI upload by cron_snapshot.py like the other annotation routes.
+# Provision 000473 on the deployment (a `dandiset.yaml` plus a `derivatives/`
+# tree) the same way as the bbox/labels dandisets.
+REPORTS_DANDISET_ROOT = pathlib.Path("/home/CodyCBakerPhD/mysite/000473")
 DANDI_INSTANCE = "https://api-dandi.emberarchive.org/api"
 LOG_LEVEL = "INFO"
 
@@ -415,6 +427,179 @@ class LabelsAnnotation(flask_restx.Resource):
 
 
 # =============================================================================
+# No-subject namespace
+# =============================================================================
+
+
+no_subject_ns = flask_restx.Namespace(
+    "annotations-no-subject",
+    description="Records a frame as containing no subject to annotate (the negative case)",
+)
+
+no_subject_request = no_subject_ns.model(
+    "NoSubjectFrame",
+    {
+        "video_url": flask_restx.fields.String(required=True),
+        "frame_index": flask_restx.fields.Integer(required=True, min=0),
+    },
+)
+
+no_subject_response = no_subject_ns.model(
+    "NoSubjectFrameResponse",
+    {
+        "content_id": flask_restx.fields.String,
+        "submission_id": flask_restx.fields.String,
+        "push_status": flask_restx.fields.String,
+    },
+)
+
+
+@no_subject_ns.route("")
+class NoSubjectFrame(flask_restx.Resource):
+    @require_auth
+    @no_subject_ns.expect(no_subject_request, validate=False)
+    @no_subject_ns.marshal_with(no_subject_response, code=http.HTTPStatus.ACCEPTED)
+    def post(self):
+        """Queue a 'no subject present' annotation for the next hourly DANDI upload."""
+        body = flask.request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise BadRequest("Request body must be a JSON object")
+
+        video_url = body.get("video_url")
+        if not isinstance(video_url, str) or not video_url:
+            raise BadRequest("'video_url' is required")
+        content_id = video_url.rsplit("/", maxsplit=1)[-1]
+        if content_id not in CONTENT_ID_TO_DANDI_PATH:
+            raise BadRequest(f"Unknown content_id: {content_id}")
+
+        submission_id = uuid.uuid4().hex
+        submitted_by = flask.g.user.get("login") or flask.g.user["sub"]
+        # Stamp the determination into the record so the buffered JSONL is
+        # self-describing regardless of which route produced it.
+        record: dict = {
+            "submission_id": submission_id,
+            "content_id": content_id,
+            "submitted_by": submitted_by,
+            **body,
+            "no_subject": True,
+        }
+
+        buffer_dir = NO_SUBJECT_DANDISET_ROOT / "derivatives" / "buffer"
+        append_to_hourly_jsonl(record, buffer_dir)
+        logger.info("Queued no-subject annotation submission_id=%s content_id=%s", submission_id, content_id)
+
+        return {
+            "content_id": content_id,
+            "submission_id": submission_id,
+            "push_status": "queued",
+        }, http.HTTPStatus.ACCEPTED
+
+
+# =============================================================================
+# Frame reports namespace
+# =============================================================================
+
+
+reports_ns = flask_restx.Namespace(
+    "reports",
+    description="User reports flagging a video frame as inappropriate or otherwise problematic",
+)
+
+# Free-text catch-all reason. The frontend modal surfaces a list of canned
+# suggestions plus an 'Other' choice with a write-in box (see pozu issue #56).
+REPORT_OTHER_REASON = "other"
+
+# Suggested reason codes, documented for the Swagger UI. The backend intentionally
+# does NOT hard-enforce this set so the frontend can refine its suggestion list
+# without a coordinated backend deploy; the only enforced rule is that the
+# free-text 'other' reason must carry a written explanation in `details`.
+SUGGESTED_REPORT_REASONS = (
+    "inappropriate_content",
+    "graphic_or_violent",
+    "corrupted_frame",
+    REPORT_OTHER_REASON,
+)
+
+reported_frame_request = reports_ns.model(
+    "ReportedFrame",
+    {
+        "video_url": flask_restx.fields.String(required=True),
+        "frame_index": flask_restx.fields.Integer(required=True, min=0),
+        "timestamp": flask_restx.fields.String(),
+        "reason": flask_restx.fields.String(
+            required=True,
+            enum=list(SUGGESTED_REPORT_REASONS),
+            description="Why the frame is being reported. One of the suggested codes, or 'other'.",
+        ),
+        "details": flask_restx.fields.String(
+            required=False,
+            description="Free-text explanation. Required when `reason` is 'other'.",
+        ),
+    },
+)
+
+reported_frame_response = reports_ns.model(
+    "ReportedFrameResponse",
+    {
+        "content_id": flask_restx.fields.String,
+        "submission_id": flask_restx.fields.String,
+        "push_status": flask_restx.fields.String,
+    },
+)
+
+
+@reports_ns.route("")
+class ReportedFrame(flask_restx.Resource):
+    @require_auth
+    @reports_ns.expect(reported_frame_request, validate=False)
+    @reports_ns.marshal_with(reported_frame_response, code=http.HTTPStatus.ACCEPTED)
+    def post(self):
+        """Queue a report flagging a single frame as inappropriate or problematic."""
+        body = flask.request.get_json(silent=True)
+        if not isinstance(body, dict):
+            raise BadRequest("Request body must be a JSON object")
+
+        video_url = body.get("video_url")
+        if not isinstance(video_url, str) or not video_url:
+            raise BadRequest("'video_url' is required")
+        content_id = video_url.rsplit("/", maxsplit=1)[-1]
+        if content_id not in CONTENT_ID_TO_DANDI_PATH:
+            raise BadRequest(f"Unknown content_id: {content_id}")
+
+        reason = body.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise BadRequest("'reason' is required")
+        reason = reason.strip()
+
+        details = body.get("details")
+        if details is not None and not isinstance(details, str):
+            raise BadRequest("'details' must be a string when provided")
+        # The 'Other' suggestion is meaningless without the write-in text.
+        if reason.lower() == REPORT_OTHER_REASON and not (isinstance(details, str) and details.strip()):
+            raise BadRequest("'details' is required when reason is 'other'")
+
+        submission_id = uuid.uuid4().hex
+        submitted_by = flask.g.user.get("login") or flask.g.user["sub"]
+        record: dict = {
+            "submission_id": submission_id,
+            "content_id": content_id,
+            "submitted_by": submitted_by,
+            **body,
+            "reason": reason,
+        }
+
+        buffer_dir = REPORTS_DANDISET_ROOT / "derivatives" / "buffer"
+        append_to_hourly_jsonl(record, buffer_dir)
+        logger.info("Queued frame report submission_id=%s content_id=%s reason=%s", submission_id, content_id, reason)
+
+        return {
+            "content_id": content_id,
+            "submission_id": submission_id,
+            "push_status": "queued",
+        }, http.HTTPStatus.ACCEPTED
+
+
+# =============================================================================
 # Health namespace
 # =============================================================================
 
@@ -564,7 +749,8 @@ def create_app() -> flask.Flask:
         title="DANDI Annotation Ingest",
         description=(
             "Accepts per-frame bounding-box annotations and SLEAP .slp label files, "
-            "queues them in hourly JSONL buffers, and uploads to DANDI via a scheduled CRON job."
+            "queues them in hourly JSONL buffers, and uploads to DANDI via a scheduled CRON job. "
+            "Also accepts frame reports flagging inappropriate or problematic content."
         ),
         doc="/api/v1/docs",
         prefix="/api/v1",
@@ -572,6 +758,8 @@ def create_app() -> flask.Flask:
 
     api.add_namespace(bbox_ns, path="/annotations/bbox")
     api.add_namespace(labels_ns, path="/annotations/labels")
+    api.add_namespace(no_subject_ns, path="/annotations/no-subject")
+    api.add_namespace(reports_ns, path="/reports")
     api.add_namespace(health_ns, path="/health")
 
     @api.errorhandler(BadRequest)
